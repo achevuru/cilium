@@ -402,7 +402,7 @@ Cilium also provides a node selector mechanims that allows us to tag a subset of
 
 ---
 
-## 12) Source references (expanded excerpts)
+## 12) Source references
 
 ### Gateway Service type selection
 ```go
