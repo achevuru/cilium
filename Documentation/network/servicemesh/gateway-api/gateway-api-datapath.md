@@ -369,9 +369,9 @@ This is the concrete, Envoy-side mechanism that makes the **ingress IPs** (and t
 ### Host-network mode
 **Pros**
 - Useful when **LoadBalancer Services are unavailable** or when external LB/routing is managed outside K8s.
-- Envoy binds directly to host interfaces (`0.0.0.0` / `::`).
+- Envoy binds directly to host interfaces (`0.0.0.0` / `::`). While this can be a security concern, it would be useful in dev environments.
 
-**Limitations / considerations**
+**Limitations / considerations** 
 - **No Service-based external LB** is created (Service type is ClusterIP).
 - Ports must be **unique across nodes** (port conflicts are possible).
 - Binding to **privileged ports** requires extra capabilities (`NET_BIND_SERVICE`).
@@ -380,11 +380,13 @@ This is the concrete, Envoy-side mechanism that makes the **ingress IPs** (and t
 
 ## 10) Recommended mode for typical managed K8s (e.g., AKS)
 
-Per the documented intent, if the environment supports **LoadBalancer Services**, the default mode is the natural fit:
+AKS environment supports **LoadBalancer Services**, the default mode is the more natural fit:
 - Cilium creates a `LoadBalancer` Service per Gateway.
 - The cloud provider’s LB controller provisions the external load balancer.
 
-Host-network mode is intended for environments where **`LoadBalancer` Services are unavailable** or when external LB/routing is managed outside the Kubernetes Service model.
+Host-network mode is intended for environments where **`LoadBalancer` Services are unavailable** or when external LB/routing is managed outside the Kubernetes Service model and more importantly would still need a node unique ingress IP.
+
+Cilium also provides a node selector mechanims that allows us to tag a subset of nodes as dedicated gateway nodes rather than all the nodes in the cluster.
 
 ---
 
