@@ -169,7 +169,9 @@ For proxied HTTP/HTTPS, Envoy **terminates the client connection** and opens a *
 
 ## 6) Network policy enforcement and the `ingress` identity
 
-The ingress reference explicitly explains how Gateway API traffic is enforced by policy. When traffic arrives at Envoy for Ingress or Gateway API, it is assigned the special **`ingress` identity** in Cilium’s policy engine. This is separate from the node IP identity and is described as an additional policy enforcement step:
+When traffic arrives at Envoy for Ingress or Gateway API, it is assigned the special **`ingress` identity** in Cilium’s policy engine. This is separate from the node IP identity and is described as an additional policy enforcement step:
+
+Doc ref:
 
 ```rst
 However, for ingress config, there's also an additional step. Traffic that arrives at
@@ -177,7 +179,7 @@ Envoy *for Ingress or Gateway API* is assigned the special ``ingress`` identity
 in Cilium's Policy engine.
 ```
 
-The same section clarifies there are **two logical policy enforcement points** for ingress traffic:
+There are **two logical policy enforcement points** for ingress traffic:
 
 ```rst
 Traffic coming from outside the cluster is usually assigned the ``world`` identity
@@ -232,7 +234,7 @@ func (e *Endpoint) InitWithIngressLabels(ctx context.Context, launchTime time.Du
 }
 ```
 
-**Result:** the `reserved:ingress` identity is tied to this **special ingress endpoint**, not to the node IP identity. This is how Cilium can enforce policy at the Envoy boundary even when Envoy’s upstream TCP connections use the node IP at L3.
+**Result:** the `reserved:ingress` identity is tied to this **special ingress endpoint**, not to the node IP identity. This is how Cilium can enforce policy at the Envoy boundary even when Envoy’s upstream TCP connections use the node ingress IP at L3.
 
 ---
 
