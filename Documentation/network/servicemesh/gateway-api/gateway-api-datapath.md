@@ -177,167 +177,7 @@ This aligns with the L7 proxy model where client identity is forwarded via heade
 
 ---
 
-## 6) Network policy enforcement and the `ingress` identity
-
-The ingress reference explicitly explains how Gateway API traffic is enforced by policy. When traffic arrives at Envoy for Ingress or Gateway API, it is assigned the special **`ingress` identity** in Cilium’s policy engine. This is separate from the node IP identity and is described as an additional policy enforcement step:
-
-```rst
-However, for ingress config, there's also an additional step. Traffic that arrives at
-Envoy *for Ingress or Gateway API* is assigned the special ``ingress`` identity
-in Cilium's Policy engine.
-```
-
-The same section clarifies there are **two logical policy enforcement points** for ingress traffic:
-
-```rst
-Traffic coming from outside the cluster is usually assigned the ``world`` identity
-(unless there are IP CIDR policies in the cluster). This means that there are
-actually *two* logical Policy enforcement points in Cilium Ingress - before traffic
-arrives at the ``ingress`` identity, and after, when it is about to exit the
-per-node Envoy.
-```
-
-**Implication for the question raised:** even if Envoy’s upstream connection uses the node IP at L3, the policy enforcement for Gateway API relies on the **`ingress` identity** assigned when traffic reaches Envoy. The enforcement point is based on this special identity (and the policy engine integration with Envoy), not strictly on the node IP identity.
-
----
-
-## 7) Reserved `ingress` identity, ingress IPs, and why they must be unique per node
-
-This section consolidates the identity/IP flow that underpins Gateway/Ingress policy enforcement and why it requires per-node ingress IPs—even in host-network mode.
-
-### 7.1) Who gets `reserved:ingress` and how it is wired
-
-The agent creates a **special ingress endpoint** that:
-- Has **no veth**, **no BPF datapath**, and is marked as **host-namespace reachable**.
-- Uses **the node’s ingress IPs** as its endpoint IPs.
-
-```go
-// Ingress endpoint is reachable via the host networking namespace
-// Host delivery flag is set in lxcmap
-ep.properties[PropertyAtHostNS] = true
-
-// Ingress endpoint has no bpf policy maps
-ep.properties[PropertySkipBPFPolicy] = true
-
-// Ingress endpoint has no bpf programs
-ep.properties[PropertyWithouteBPFDatapath] = true
-
-ep.IPv4, _ = netipx.FromStdIP(node.GetIngressIPv4(logger))
-ep.IPv6, _ = netip.AddrFromSlice(node.GetIngressIPv6(logger))
-```
-
-This ingress endpoint is then initialized with **`reserved:ingress`**, which is the identity used by policy enforcement for Gateway/Ingress traffic:
-
-```go
-// InitWithIngressLabels initializes the endpoint with reserved:ingress.
-func (e *Endpoint) InitWithIngressLabels(ctx context.Context, launchTime time.Duration) {
-	if !e.isIngress {
-		return
-	}
-	epLabels := labels.Labels{}
-	epLabels.MergeLabels(labels.LabelIngress)
-	...
-	e.UpdateLabels(..., epLabels, epLabels, true)
-}
-```
-
-**Result:** the `reserved:ingress` identity is tied to this **special ingress endpoint**, not to the node IP identity. This is how Cilium can enforce policy at the Envoy boundary even when Envoy’s upstream TCP connections use the node IP at L3.
-
----
-
-### 7.2) Where ingress IPs come from (and how they’re annotated)
-
-Ingress IPs are tracked on the node as dedicated fields:
-
-```go
-// IPv4IngressIP if not nil, this is the IPv4 address of the
-// Ingress listener on the node.
-IPv4IngressIP net.IP
-// IPv6IngressIP if not nil, this is the IPv6 address of the
-// Ingress listener located on the node.
-IPv6IngressIP net.IP
-```
-
-They are also stored in **Kubernetes Node annotations**, separate from `cilium_host` IP annotations:
-
-```go
-// V4IngressName / V6IngressName store the Ingress listener IPs on the Node.
-V4IngressName      = "network.cilium.io/ipv4-Ingress-ip"
-V6IngressName      = "network.cilium.io/ipv6-Ingress-ip"
-
-// CiliumHostIP / CiliumHostIPv6 store cilium_host interface IPs.
-CiliumHostIP       = "network.cilium.io/ipv4-cilium-host"
-CiliumHostIPv6     = "network.cilium.io/ipv6-cilium-host"
-```
-
-These ingress IPs are read from Node annotations and stored in the node model:
-
-```go
-if ingressIP, ok := annotation.Get(k8sNode, annotation.V4IngressName, ...); ok && ingressIP != "" {
-	newNode.IPv4IngressIP = net.ParseIP(ingressIP)
-}
-```
-
-**Key distinction:** ingress IPs are **not** the same as `cilium_host` IPs. They are dedicated ingress listener addresses used by the ingress endpoint and `reserved:ingress` identity.
-
----
-
-### 7.3) Why ingress IPs must be unique per node (even in host-network mode)
-
-Each node’s ingress IPs are injected into **IPCache** with:
-- **`labels.LabelIngress`** (reserved:ingress identity), and
-- a **TunnelPeer** that points to that node’s IP.
-
-```go
-m.ipcache.UpsertMetadata(prefixCluster, n.Source, resource,
-	labels.LabelIngress,
-	ipcacheTypes.TunnelPeer{Addr: nodeIP},
-	m.endpointEncryptionKey(&n))
-```
-
-This creates a **prefix → node association** in IPCache. If you reuse the **same ingress IP on multiple nodes**, these IPCache entries will **conflict**, because the same prefix would be associated with multiple TunnelPeers. The last writer wins, leading to unstable or incorrect identity/metadata bindings.
-
-**Therefore:** ingress IPs must be **unique per node** to preserve a stable, unambiguous prefix→node association for `reserved:ingress`.
-
----
-
-### 7.4) Why this still applies in host-network mode
-
-Host-network mode only changes **listener binding** and **Service type**. It does **not** remove the ingress endpoint or the need for `reserved:ingress` identity and IPCache metadata. The ingress endpoint still needs its ingress IPs to exist because:
-- the **endpoint IPs** are set to `node.GetIngressIPv4/IPv6`, and
-- the **ingress identity** is tied to that endpoint, regardless of how listeners are bound.
-
-So, even in host-network mode:
-- `reserved:ingress` identity still exists,
-- ingress IPs are still required,
-- and those ingress IPs still must be **unique per node**.
-
----
-
-## 8) Pros/cons and limitations
-
-### Default (non-host-network) mode
-**Pros**
-- Automatic **external LB creation** via Service type `LoadBalancer`.
-- Standard Kubernetes workflow for managed clouds.
-- eBPF+TPROXY delivery to Envoy with **source IP preserved** to Envoy.
-
-**Limitations / considerations**
-- Requires a cluster environment that **supports `LoadBalancer` Services**.
-
-### Host-network mode
-**Pros**
-- Useful when **LoadBalancer Services are unavailable** or when external LB/routing is managed outside K8s.
-- Envoy binds directly to host interfaces (`0.0.0.0` / `::`).
-
-**Limitations / considerations**
-- **No Service-based external LB** is created (Service type is ClusterIP).
-- Ports must be **unique across nodes** (port conflicts are possible).
-- Binding to **privileged ports** requires extra capabilities (`NET_BIND_SERVICE`).
-
----
-
-## 9) Recommended mode for typical managed K8s (e.g., AKS)
+## 7) Recommended mode for typical managed K8s (e.g., AKS)
 
 Per the documented intent, if the environment supports **LoadBalancer Services**, the default mode is the natural fit:
 - Cilium creates a `LoadBalancer` Service per Gateway.
@@ -347,7 +187,7 @@ Host-network mode is intended for environments where **`LoadBalancer` Services a
 
 ---
 
-## 10) End-to-end summary (side-by-side)
+## 8) End-to-end summary (side-by-side)
 
 | Aspect | Default (non-host-network) | Host-network |
 |---|---|---|
@@ -359,7 +199,7 @@ Host-network mode is intended for environments where **`LoadBalancer` Services a
 
 ---
 
-## 11) Source references (expanded excerpts)
+## 9) Source references (expanded excerpts)
 
 ### Gateway Service type selection
 ```go
@@ -410,21 +250,6 @@ the traffic and transparently forwards it to Envoy (using the TPROXY kernel faci
 ```rst
 In *both* externalTrafficPolicy cases, traffic will arrive at any node
 in the cluster, and be forwarded to Envoy while keeping the source IP intact.
-```
-
-### Policy enforcement and the `ingress` identity
-```rst
-However, for ingress config, there's also an additional step. Traffic that arrives at
-Envoy *for Ingress or Gateway API* is assigned the special ``ingress`` identity
-in Cilium's Policy engine.
-```
-
-```rst
-Traffic coming from outside the cluster is usually assigned the ``world`` identity
-(unless there are IP CIDR policies in the cluster). This means that there are
-actually *two* logical Policy enforcement points in Cilium Ingress - before traffic
-arrives at the ``ingress`` identity, and after, when it is about to exit the
-per-node Envoy.
 ```
 
 ### Dedicated IP requirement (delegated IPAM restriction)
