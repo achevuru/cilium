@@ -177,29 +177,6 @@ This aligns with the L7 proxy model where client identity is forwarded via heade
 
 ---
 
-## 6) Pros/cons and limitations
-
-### Default (non-host-network) mode
-**Pros**
-- Automatic **external LB creation** via Service type `LoadBalancer`.
-- Standard Kubernetes workflow for managed clouds.
-- eBPF+TPROXY delivery to Envoy with **source IP preserved** to Envoy.
-
-**Limitations / considerations**
-- Requires a cluster environment that **supports `LoadBalancer` Services**.
-
-### Host-network mode
-**Pros**
-- Useful when **LoadBalancer Services are unavailable** or when external LB/routing is managed outside K8s.
-- Envoy binds directly to host interfaces (`0.0.0.0` / `::`).
-
-**Limitations / considerations**
-- **No Service-based external LB** is created (Service type is ClusterIP).
-- Ports must be **unique across nodes** (port conflicts are possible).
-- Binding to **privileged ports** requires extra capabilities (`NET_BIND_SERVICE`).
-
----
-
 ## 7) Recommended mode for typical managed K8s (e.g., AKS)
 
 Per the documented intent, if the environment supports **LoadBalancer Services**, the default mode is the natural fit:
