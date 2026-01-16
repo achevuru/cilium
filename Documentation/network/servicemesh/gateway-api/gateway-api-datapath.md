@@ -57,7 +57,7 @@ Node IP + Service Port
 TPROXY redirect --> Local Envoy (per-node)
    |
    v
-Envoy opens upstream connection to backend Pod
+Envoy opens upstream connection to backend Pod with the node's Ingress IP
    |
    v
 Backend replies to Envoy -> Envoy replies to Client
@@ -98,7 +98,7 @@ Node IP : Gateway Port (host listener)
 Envoy listener bound to 0.0.0.0/::
    |
    v
-Envoy -> Backend Pod
+Envoy -> Backend Pod (with node's ingress IP)
    |
    v
 Backend -> Envoy -> Client
