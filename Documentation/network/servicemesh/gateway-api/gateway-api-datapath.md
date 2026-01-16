@@ -315,7 +315,47 @@ So, even in host-network mode:
 
 ---
 
-## 8) Pros/cons and limitations
+## 8) Envoy bpf_metadata: how ingress IPs are used
+
+The Envoy listener filter `cilium.bpf_metadata` explicitly carries ingress settings, and it uses the **configured ingress IPs** for **north/south L7 LB** to derive the source identity and policy lookup.
+
+The filter configuration exposes ingress vs egress and the per-family source addresses:
+
+```proto
+// 'true' if the filter is on ingress listener, 'false' for egress listener.
+bool is_ingress = 2;
+
+// True if the listener is used for an L7 LB.
+bool is_l7lb = 4;
+
+// Source address to be used whenever the original source address is not used.
+string ipv4_source_address = 5;
+string ipv6_source_address = 6;
+```
+
+Inside the filter, for **north/south L7 LB** (which is how Ingress/Gateway traffic is handled), the filter:
+- selects the **local ingress IP** matching the IP family of the connection,
+- resolves the **source identity** for that ingress IP, and
+- disables original-source usage for the upstream connection.
+
+```cpp
+// Use the configured IPv4/IPv6 Ingress IPs as starting point for the sources addresses
+IpAddressPair source_addresses(ipv4_source_address_, ipv6_source_address_);
+
+// North/south L7 LB: pick local ingress source address and use it for policy identity
+const Network::Address::Ip* ingress_ip = selectIpVersion(sip->version(), source_addresses);
+...
+source_identity = resolvePolicyId(ingress_ip);
+...
+// Original source address is never used for north/south LB
+src_address = nullptr;
+```
+
+This is the concrete, Envoy-side mechanism that makes the **ingress IPs** (and their `reserved:ingress` identity mapping) meaningful for Gateway/Ingress traffic, beyond simply “arriving at an ingress listener.”
+
+---
+
+## 9) Pros/cons and limitations
 
 ### Default (non-host-network) mode
 **Pros**
@@ -338,7 +378,7 @@ So, even in host-network mode:
 
 ---
 
-## 9) Recommended mode for typical managed K8s (e.g., AKS)
+## 10) Recommended mode for typical managed K8s (e.g., AKS)
 
 Per the documented intent, if the environment supports **LoadBalancer Services**, the default mode is the natural fit:
 - Cilium creates a `LoadBalancer` Service per Gateway.
@@ -348,7 +388,7 @@ Host-network mode is intended for environments where **`LoadBalancer` Services a
 
 ---
 
-## 10) End-to-end summary (side-by-side)
+## 11) End-to-end summary (side-by-side)
 
 | Aspect | Default (non-host-network) | Host-network |
 |---|---|---|
@@ -360,7 +400,7 @@ Host-network mode is intended for environments where **`LoadBalancer` Services a
 
 ---
 
-## 11) Source references (expanded excerpts)
+## 12) Source references (expanded excerpts)
 
 ### Gateway Service type selection
 ```go
