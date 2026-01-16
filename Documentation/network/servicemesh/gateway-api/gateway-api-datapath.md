@@ -25,7 +25,7 @@ func (t *gatewayAPITranslator) toServiceType(params *model.Service) corev1.Servi
 Because the Service is type `LoadBalancer`, the **cloud provider’s load balancer controller/CCM** is expected to provision the external LB for that Service.
 
 ### Host-network mode
-Host-network mode **disables the LoadBalancer Service mode** and **binds listeners directly on node interfaces**. The doc states these are mutually exclusive:
+Host-network mode **disables the LoadBalancer Service mode** and **binds listeners directly on node interfaces**. As the docs indicate these are mutually exclusive:
 
 ```rst
 * Enabling the Cilium Gateway API host network mode automatically disables the LoadBalancer type Service mode. They are mutually exclusive.
