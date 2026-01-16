@@ -63,7 +63,7 @@ Envoy opens upstream connection to backend Pod with the node's Ingress IP
 Backend replies to Envoy -> Envoy replies to Client
 ```
 
-### Key behavior from docs
+### Key behavior
 The ingress reference describes how traffic reaches Envoy when exposed via LoadBalancer or NodePort:
 
 ```rst
@@ -73,7 +73,7 @@ these cases, when traffic arrives at the Service's port, eBPF code intercepts
 the traffic and transparently forwards it to Envoy (using the TPROXY kernel facility).
 ```
 
-It also explicitly states that the **source IP is preserved** when traffic is forwarded to Envoy:
+Docs also clearly indicate that the **source IP is preserved** when traffic is forwarded to Envoy:
 
 ```rst
 In *both* externalTrafficPolicy cases, traffic will arrive at any node
