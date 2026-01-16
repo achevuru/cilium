@@ -1,6 +1,6 @@
 # Cilium Gateway API datapath walkthrough (default vs host-network)
 
-This document consolidates the Gateway API behavior and focuses on **how the external load balancer is created**, **how traffic reaches Envoy**, and **why certain data path choices are required**.
+This document consolidates the Gateway API behavior and focuses on how the external load balancer is created, how traffic reaches Envoy, and why certain data path choices are required.
 
 ---
 
