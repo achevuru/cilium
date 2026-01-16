@@ -140,7 +140,7 @@ if c.EnableEnvoyConfig {
 ```
 
 ### The routing-table reason (not just “marks”)
-Proxy routing uses **policy routing** and installs **local/next-hop routes** anchored on the **Cilium internal IP**. Marks select the table, but the table still needs a concrete IP target:
+Proxy routing uses **policy routing** and installs **local/next-hop routes** anchored on the **Cilium internal IP**. Marks select the table, but the table still needs a concrete IP target which is the Cilium_host IP:
 
 ```go
 fromProxyToCiliumHostRoute4 := route.Route{
@@ -159,21 +159,11 @@ fromProxyDefaultRoute4 := route.Route{
 	Device:  device,
 }
 ```
-
-**Takeaway:** the dedicated IP is required because the routing table needs an **L3 next-hop/local route target** for proxy-originated traffic. This is a functional requirement of the datapath, not just an identifier.
-
 ---
 
 ## 5) Why backend pods don’t reply directly to the external client
 
-For proxied HTTP/HTTPS, Envoy **terminates the client connection** and opens a **new upstream TCP connection** to the backend. This is why the backend’s TCP peer is Envoy (often node IP), and replies go back to Envoy rather than directly to the client. The docs make this explicit for TLS passthrough:
-
-```rst
-Because it's a new TCP stream, as far as the backends are concerned,
-the source IP is Envoy (which is often the Node IP, depending on your Cilium config).
-```
-
-This aligns with the L7 proxy model where client identity is forwarded via headers (X-Forwarded-For / X-Envoy-External-Address), while the upstream TCP peer is Envoy.
+For proxied HTTP/HTTPS, Envoy **terminates the client connection** and opens a **new upstream TCP connection** to the backend with Node's Ingress IP. This is why the backend’s TCP peer is the node from which Envoy originated the backend connection, and replies go back to Envoy rather than directly to the client. 
 
 ---
 
