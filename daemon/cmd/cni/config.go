@@ -94,8 +94,10 @@ func (c *cniConfigManager) GetCustomNetConf() *cnitypes.NetConf {
 	return conf
 }
 
-// GetCiliumNetConf returns the Cilium CNI config (raw bytes and parsed) from either
-// the configured read-cni-conf path or the generated config path.
+// GetCiliumNetConf returns the Cilium CNI config (raw bytes and parsed).
+// Stage 1: Resolve the on-node config path from either read-cni-conf or the generated config path.
+// Stage 2: Read raw config bytes from disk.
+// Stage 3: Parse and return the Cilium plugin config and its raw JSON.
 func (c *cniConfigManager) GetCiliumNetConf() (*cnitypes.NetConf, []byte, error) {
 	configPath, err := c.cniConfigPath()
 	if err != nil {
@@ -123,16 +125,23 @@ type cniConfigType struct {
 	Type string `json:"type"`
 }
 
+// cniConfigPath resolves the CNI configuration path from the configured sources.
+// Stage 1: Prefer the explicit read-cni-conf path if set.
+// Stage 2: Fall back to the generated config path when write-cni-conf-when-ready is set.
+// Stage 3: Otherwise, report that no config path is available.
 func (c *cniConfigManager) cniConfigPath() (string, error) {
 	if c.config.ReadCNIConf != "" {
 		return c.config.ReadCNIConf, nil
 	}
 	if c.config.WriteCNIConfWhenReady != "" {
-		return c.config.WriteCNIConfWhenReady, nil
+		return path.Join(c.cniConfDir, c.cniConfFile), nil
 	}
 	return "", fmt.Errorf("no CNI configuration path is available")
 }
 
+// loadCiliumNetConf parses the CNI config and returns the Cilium plugin config + raw bytes.
+// Stage 1: Attempt to parse a CNI conflist and locate the cilium-cni plugin.
+// Stage 2: Fall back to a standalone CNI config and parse it as Cilium netconf.
 func loadCiliumNetConf(rawConfig []byte) (*cnitypes.NetConf, []byte, error) {
 	var configList cniConfigList
 	if err := json.Unmarshal(rawConfig, &configList); err == nil && len(configList.Plugins) > 0 {
