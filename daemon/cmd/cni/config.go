@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -92,6 +93,25 @@ func (c *cniConfigManager) GetCustomNetConf() *cnitypes.NetConf {
 		return nil
 	}
 	return conf
+}
+
+// GetNetConf returns the parsed CNI configuration for the Cilium plugin.
+// If --read-cni-conf is set, it reads from that file. Otherwise, it reads
+// the configuration written by the agent.
+func (c *cniConfigManager) GetNetConf() (*cnitypes.NetConf, error) {
+	configPath := c.config.ReadCNIConf
+	if configPath == "" {
+		if c.cniConfDir == "" || c.cniConfFile == "" {
+			return nil, fmt.Errorf("CNI configuration path is not available")
+		}
+		configPath = filepath.Join(c.cniConfDir, c.cniConfFile)
+	}
+
+	conf, err := cnitypes.ReadNetConf(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CNI configuration file %s: %w", configPath, err)
+	}
+	return conf, nil
 }
 
 // cniConfigs are the default configurations, per chaining mode

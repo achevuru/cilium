@@ -5,13 +5,17 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 
 	"github.com/cilium/hive/cell"
 	"github.com/cilium/hive/job"
 	"github.com/cilium/statedb"
+	cniInvoke "github.com/containernetworking/cni/pkg/invoke"
+	cniTypesV1 "github.com/containernetworking/cni/pkg/types/100"
 
 	"github.com/cilium/cilium/pkg/cidr"
 	linuxrouting "github.com/cilium/cilium/pkg/datapath/linux/routing"
@@ -30,7 +34,10 @@ import (
 )
 
 const (
-	mismatchRouterIPsMsg = "Mismatch of router IPs found during restoration. The Kubernetes resource contained %s, while the filesystem contained %s. Using the router IP from the filesystem. To change the router IP, specify --%s and/or --%s."
+	mismatchRouterIPsMsg        = "Mismatch of router IPs found during restoration. The Kubernetes resource contained %s, while the filesystem contained %s. Using the router IP from the filesystem. To change the router IP, specify --%s and/or --%s."
+	delegatedIngressContainerID = "cilium-agent-ingress"
+	delegatedIngressNetNS       = "host"
+	delegatedIngressIfName      = "eth0"
 )
 
 func (d *Daemon) allocateRouterIPv4(family types.NodeAddressingFamily, fromK8s, fromFS net.IP) (net.IP, error) {
@@ -321,6 +328,15 @@ func (d *Daemon) allocateHealthIPs() error {
 func (d *Daemon) allocateIngressIPs() error {
 	bootstrapStats.ingressIPAM.Start()
 	if option.Config.EnableEnvoyConfig {
+		if option.Config.IPAM == ipamOption.IPAMDelegatedPlugin {
+			if err := d.allocateIngressIPsDelegated(); err != nil {
+				bootstrapStats.ingressIPAM.End(false)
+				return err
+			}
+			bootstrapStats.ingressIPAM.End(true)
+			return nil
+		}
+
 		if option.Config.EnableIPv4 {
 			var result *ipam.AllocationResult
 			var err error
@@ -428,6 +444,115 @@ func (d *Daemon) allocateIngressIPs() error {
 	}
 	bootstrapStats.ingressIPAM.End(true)
 	return nil
+}
+
+func (d *Daemon) allocateIngressIPsDelegated() error {
+	if d.cniConfigManager == nil {
+		return fmt.Errorf("delegated IPAM requires CNI config manager")
+	}
+
+	netConf, err := d.cniConfigManager.GetNetConf()
+	if err != nil {
+		return fmt.Errorf("unable to load CNI configuration for delegated IPAM: %w", err)
+	}
+	if netConf.IPAM.Type == "" {
+		return fmt.Errorf("delegated IPAM requires ipam.type in CNI configuration")
+	}
+
+	stdinData, err := json.Marshal(netConf)
+	if err != nil {
+		return fmt.Errorf("failed to marshal CNI configuration: %w", err)
+	}
+
+	cniPath := os.Getenv("CNI_PATH")
+	if cniPath == "" {
+		return fmt.Errorf("CNI_PATH must be set to invoke delegated IPAM plugin")
+	}
+
+	restoreEnv := setCNIEnv(map[string]string{
+		"CNI_CONTAINERID": delegatedIngressContainerID,
+		"CNI_NETNS":       delegatedIngressNetNS,
+		"CNI_IFNAME":      delegatedIngressIfName,
+		"CNI_ARGS":        "",
+		"CNI_PATH":        cniPath,
+	})
+	defer restoreEnv()
+
+	ctx := context.Background()
+
+	if node.GetIngressIPv4(d.logger) != nil || node.GetIngressIPv6(d.logger) != nil {
+		if err := cniInvoke.DelegateCheck(ctx, netConf.IPAM.Type, stdinData, nil); err == nil {
+			d.logger.Info("Reusing delegated ingress IP allocation",
+				logfields.V4IngressIP, node.GetIngressIPv4(d.logger),
+				logfields.V6IngressIP, node.GetIngressIPv6(d.logger),
+			)
+			return nil
+		} else {
+			d.logger.Warn("Delegated IPAM CHECK failed; re-allocating ingress IPs", logfields.Error, err)
+		}
+	}
+
+	if err := cniInvoke.DelegateDel(ctx, netConf.IPAM.Type, stdinData, nil); err != nil {
+		d.logger.Debug("Delegated IPAM DEL failed for ingress IPs", logfields.Error, err)
+	}
+
+	ipamRawResult, err := cniInvoke.DelegateAdd(ctx, netConf.IPAM.Type, stdinData, nil)
+	if err != nil {
+		return fmt.Errorf("failed to invoke delegated IPAM ADD for ingress IPs: %w", err)
+	}
+
+	ipamResult, err := cniTypesV1.NewResultFromResult(ipamRawResult)
+	if err != nil {
+		return fmt.Errorf("could not interpret delegated IPAM result: %w", err)
+	}
+
+	var ingressIPv4, ingressIPv6 net.IP
+	for _, ipConfig := range ipamResult.IPs {
+		ip := ipConfig.Address.IP
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			ingressIPv4 = ip
+		} else {
+			ingressIPv6 = ip
+		}
+	}
+
+	if option.Config.EnableIPv4 && ingressIPv4 == nil {
+		return fmt.Errorf("delegated IPAM did not return an IPv4 ingress address")
+	}
+	if option.Config.EnableIPv6 && ingressIPv6 == nil {
+		return fmt.Errorf("delegated IPAM did not return an IPv6 ingress address")
+	}
+
+	if ingressIPv4 != nil {
+		node.SetIngressIPv4(ingressIPv4)
+		d.logger.Info(fmt.Sprintf("  Ingress IPv4: %s", node.GetIngressIPv4(d.logger)))
+	}
+	if ingressIPv6 != nil {
+		node.SetIngressIPv6(ingressIPv6)
+		d.logger.Info(fmt.Sprintf("  Ingress IPv6: %s", node.GetIngressIPv6(d.logger)))
+	}
+
+	return nil
+}
+
+func setCNIEnv(values map[string]string) func() {
+	previous := make(map[string]string, len(values))
+	for key, value := range values {
+		previous[key] = os.Getenv(key)
+		_ = os.Setenv(key, value)
+	}
+	return func() {
+		for key, value := range previous {
+			if value == "" {
+				_ = os.Unsetenv(key)
+			} else {
+				_ = os.Setenv(key, value)
+			}
+		}
+	}
 }
 
 type restoredIPs struct {

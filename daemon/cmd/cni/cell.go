@@ -50,6 +50,11 @@ type CNIConfigManager interface {
 
 	GetCustomNetConf() *cnitypes.NetConf
 
+	// GetNetConf returns the parsed CNI configuration for the Cilium plugin.
+	// This can come from --read-cni-conf or from the CNI configuration written
+	// by the agent. The returned config is suitable for invoking delegated IPAM.
+	GetNetConf() (*cnitypes.NetConf, error)
+
 	// ExternalRoutingEnabled returns true if the chained plugin implements
 	// routing for Endpoints (Pods).
 	ExternalRoutingEnabled() bool

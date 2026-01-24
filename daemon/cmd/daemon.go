@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/statedb"
 	"github.com/vishvananda/netlink"
 
+	cnicell "github.com/cilium/cilium/daemon/cmd/cni"
 	agentK8s "github.com/cilium/cilium/daemon/k8s"
 	"github.com/cilium/cilium/pkg/clustermesh"
 	"github.com/cilium/cilium/pkg/controller"
@@ -88,7 +89,8 @@ type Daemon struct {
 
 	mtuConfig mtu.MTU
 
-	nodeAddressing datapath.NodeAddressing
+	nodeAddressing   datapath.NodeAddressing
+	cniConfigManager cnicell.CNIConfigManager
 
 	// nodeDiscovery defines the node discovery logic of the agent
 	nodeDiscovery  *nodediscovery.NodeDiscovery
@@ -287,6 +289,7 @@ func newDaemon(ctx context.Context, cleaner *daemonCleanup, params *daemonParams
 		nodeAddrs:        params.NodeAddrs,
 		nodeDiscovery:    params.NodeDiscovery,
 		nodeLocalStore:   params.LocalNodeStore,
+		cniConfigManager: params.CNIConfigManager,
 		controllers:      controller.NewManager(),
 		jobGroup:         params.JobGroup,
 
