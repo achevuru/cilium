@@ -45,8 +45,13 @@ type gatewayReconciler struct {
 	installedCRDs []schema.GroupVersionKind
 }
 
-func newGatewayReconciler(mgr ctrl.Manager, translator translation.Translator, logger *slog.Logger, installedCRDs []schema.GroupVersionKind) *gatewayReconciler {
+func newGatewayReconciler(mgr ctrl.Manager, translator translation.Translator, logger *slog.Logger, installedCRDs []schema.GroupVersionKind, enableTLSRoute bool) *gatewayReconciler {
 	scopedLog := logger.With(logfields.Controller, gateway)
+
+	if !enableTLSRoute {
+		installedCRDs = append([]schema.GroupVersionKind{}, installedCRDs...)
+		installedCRDs = removeGVKByKind(installedCRDs, helpers.TLSRouteKind)
+	}
 
 	return &gatewayReconciler{
 		Client:        mgr.GetClient(),
@@ -55,6 +60,17 @@ func newGatewayReconciler(mgr ctrl.Manager, translator translation.Translator, l
 		logger:        scopedLog,
 		installedCRDs: installedCRDs,
 	}
+}
+
+func removeGVKByKind(gvks []schema.GroupVersionKind, kind string) []schema.GroupVersionKind {
+	filtered := make([]schema.GroupVersionKind, 0, len(gvks))
+	for _, gvk := range gvks {
+		if gvk.Kind == kind {
+			continue
+		}
+		filtered = append(filtered, gvk)
+	}
+	return filtered
 }
 
 // SetupWithManager sets up the controller with the Manager.

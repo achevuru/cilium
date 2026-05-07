@@ -45,6 +45,7 @@ var Cell = cell.Module(
 
 	cell.Config(gatewayApiConfig{
 		EnableGatewayAPISecretsSync:            true,
+		EnableGatewayAPITLSRoute:               true,
 		EnableGatewayAPIProxyProtocol:          false,
 		EnableGatewayAPIAppProtocol:            false,
 		EnableGatewayAPIAlpn:                   false,
@@ -183,6 +184,7 @@ func discoverCRDsWithRetry(ctx context.Context, client k8sClient.Clientset, logg
 
 type gatewayApiConfig struct {
 	EnableGatewayAPISecretsSync            bool
+	EnableGatewayAPITLSRoute               bool
 	EnableGatewayAPIProxyProtocol          bool
 	EnableGatewayAPIAppProtocol            bool
 	EnableGatewayAPIAlpn                   bool
@@ -196,6 +198,7 @@ type gatewayApiConfig struct {
 
 func (r gatewayApiConfig) Flags(flags *pflag.FlagSet) {
 	flags.Bool("enable-gateway-api-secrets-sync", r.EnableGatewayAPISecretsSync, "Enables fan-in TLS secrets sync from multiple namespaces to singular namespace (specified by gateway-api-secrets-namespace flag)")
+	flags.Bool("enable-gateway-api-tlsroute", r.EnableGatewayAPITLSRoute, "Enables TLSRoute support in Gateway API controller, including TLSRoute indexes and watches")
 	flags.Bool("enable-gateway-api-proxy-protocol", r.EnableGatewayAPIProxyProtocol, "Enable proxy protocol for all GatewayAPI listeners. Note that _only_ Proxy protocol traffic will be accepted once this is enabled.")
 	flags.Bool("enable-gateway-api-app-protocol", r.EnableGatewayAPIAppProtocol, "Enables Backend Protocol selection (GEP-1911) for Gateway API via appProtocol")
 	flags.Bool("enable-gateway-api-alpn", r.EnableGatewayAPIAlpn, "Enables exposing ALPN with HTTP2 and HTTP/1.1 support for Gateway API")
@@ -282,6 +285,7 @@ func initGatewayAPIController(params gatewayAPIParams) error {
 		gatewayAPITranslator,
 		params.Logger,
 		installedKinds,
+		params.GatewayApiConfig.EnableGatewayAPITLSRoute,
 	); err != nil {
 		return fmt.Errorf("failed to create gateway controller: %w", err)
 	}
@@ -419,12 +423,12 @@ func checkCRDs(ctx context.Context, clientset k8sClient.Clientset, logger *slog.
 
 // registerReconcilers registers Gateway API reconcilers to the controller-runtime library manager.
 // optionalKinds are previously autodetected based on what CRDs are present in the cluster.
-func registerReconcilers(mgr ctrlRuntime.Manager, translator translation.Translator, logger *slog.Logger, installedCRDs []schema.GroupVersionKind) error {
+func registerReconcilers(mgr ctrlRuntime.Manager, translator translation.Translator, logger *slog.Logger, installedCRDs []schema.GroupVersionKind, enableTLSRoute bool) error {
 	requiredReconcilers := []interface {
 		SetupWithManager(mgr ctrlRuntime.Manager) error
 	}{
 		newGatewayClassReconciler(mgr, logger),
-		newGatewayReconciler(mgr, translator, logger, installedCRDs),
+		newGatewayReconciler(mgr, translator, logger, installedCRDs, enableTLSRoute),
 		newGammaReconciler(mgr, translator, logger),
 		newGatewayClassConfigReconciler(mgr, logger),
 	}
